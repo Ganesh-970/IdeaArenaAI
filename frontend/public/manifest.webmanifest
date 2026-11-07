@@ -1,0 +1,10 @@
+{
+  "id": "/", "name": "IdeaArena AI", "short_name": "IdeaArena",
+  "description": "Evaluate your ideas with ten distinct AI perspectives.",
+  "start_url": "/", "scope": "/", "display": "standalone",
+  "background_color": "#100d0b", "theme_color": "#100d0b", "orientation": "any",
+  "icons": [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ]
+}

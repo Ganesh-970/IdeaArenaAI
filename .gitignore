@@ -1,0 +1,46 @@
+﻿/*
+!/backend/
+!/frontend/
+!/.gitignore
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node generated files
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.*
+!.env.example
+.ideaarena_secret
+**/.ideaarena_secret
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# IdeaArena old backend backups
+backend/main_before_*.py
+backend/backend_addon/*_backup.py
+backend/IdeaArena_Sector_Evidence_Update/
+
+# Old frontend backups
+frontend/src/*_before_*.tsx
+frontend/src/*_before_*.css
+
+# Development-only helper scripts
+frontend/add_india_ui.py
+frontend/simplify_india_evidence.py
+frontend/ideaarena_componentry_setup/
+

@@ -1,0 +1,26 @@
+IDEAARENA AI - INTEGRATED WORLD BANK EVIDENCE UPDATE
+
+This patch connects the 29 downloaded World Bank India indicator CSVs to the
+existing evidence engine.
+
+INSTALL:
+1. Stop the backend server with Ctrl+C.
+2. Extract this ZIP directly into:
+   C:\Users\chram\Documents\IdeaArenaAI\backend
+3. Allow main.py and backend_addon\india_evidence_engine.py to be replaced.
+4. If Windows asks to merge data folders, choose Yes.
+5. Do NOT replace/delete .venv, .ideaarena_secret, evaluations.sqlite3,
+   users, or existing RBI data.
+6. Restart:
+   .\.venv\Scripts\python.exe -m uvicorn main:app --reload
+
+This patch only changes the evidence collection path and evidence engine.
+It preserves the authentication/database implementation in main.py because
+the supplied updated main.py differs from the current main.py only by changing
+the evidence data path from data/raw/rbi_dbie to data/raw.
+
+The World Bank files are national contextual indicators, not direct proof of
+product demand, customer willingness to pay, city-level market size, or
+competitor share. Those remain evidence gaps rather than fabricated facts.
+
+The Roads network indicator did not download; the other 29 are included.
