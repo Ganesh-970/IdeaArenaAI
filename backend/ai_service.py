@@ -1,57 +1,98 @@
+
 import json
 import re
+import os
 import httpx
 
-OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL = "qwen3:4b"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+MODEL = "openai/gpt-oss-20b"
+
 
 async def ask_ai(prompt: str) -> str:
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY environment variable is missing.")
+
     payload = {
         "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,
-        "format": "json",
-        "keep_alive": "10m",
-        "options": {
-            "temperature": 0.15,
-            "num_predict": 2200,
-            "num_ctx": 6144
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.15,
+        "max_completion_tokens": 2200,
+        "response_format": {
+            "type": "json_object"
         }
     }
-    timeout = httpx.Timeout(connect=10.0, read=300.0, write=20.0, pool=10.0)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    timeout = httpx.Timeout(
+        connect=15.0,
+        read=120.0,
+        write=20.0,
+        pool=10.0
+    )
+
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(OLLAMA_URL, json=payload)
+        response = await client.post(
+            GROQ_URL,
+            json=payload,
+            headers=headers
+        )
         response.raise_for_status()
+
         data = response.json()
-        result = data.get("response", "").strip()
-        if not result:
-            raise RuntimeError(
-                "Ollama returned an empty response. "
-                f"Thinking output: {data.get('thinking', '')[:250]}"
-            )
-        return result
+        choices = data.get("choices", [])
+
+        if not choices:
+            raise RuntimeError("Groq returned an empty response.")
+
+        result = choices[0].get("message", {}).get("content", "")
+
+        if not result or not result.strip():
+            raise RuntimeError("Groq returned empty AI content.")
+
+        return result.strip()
 
 
 def parse_json_response(raw: str) -> dict:
     """Extract a JSON object and handle common model formatting mistakes."""
+
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("The AI returned an empty response.")
 
     cleaned = raw.strip().lstrip("\ufeff")
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"^```(?:json)?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE
+    )
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
     start = cleaned.find("{")
     end = cleaned.rfind("}")
+
     if start < 0 or end <= start:
-        raise ValueError("The AI response did not contain a complete JSON object.")
+        raise ValueError(
+            "The AI response did not contain a complete JSON object."
+        )
 
     candidate = cleaned[start:end + 1]
-    # Remove trailing commas before closing braces/brackets (a frequent LLM mistake).
+
     candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
-    # Remove invalid control characters inside the candidate.
-    candidate = "".join(ch for ch in candidate if ch in "\t\n\r" or ord(ch) >= 32)
+    candidate = "".join(
+        ch for ch in candidate
+        if ch in "\t\n\r" or ord(ch) >= 32
+    )
 
     try:
         result = json.loads(candidate)
@@ -63,4 +104,5 @@ def parse_json_response(raw: str) -> dict:
 
     if not isinstance(result, dict):
         raise ValueError("The AI response must be a JSON object.")
+
     return result
