@@ -191,7 +191,52 @@ function App() {
       <nav className="navbar">
         <a className="brand" href="#"><span className="brand-icon">I</span> idea<span>arena</span><small>AI</small></a>
         <div className="nav-links"><a href="#how">How it works</a><a href="#agents">AI Personas</a><a href="#features">Features</a></div>
-        <div className="nav-actions"><label className="language-control" aria-label="Choose language"><span>æ–‡</span><select value={language} onChange={e=>{const v=e.target.value as LanguageCode;setLanguage(v);localStorage.setItem("ideaarena-language",v)}}><option value="en">English</option><option value="hi">à¤¹à¤¿à¤¨à¥à¤¦à¥€</option><option value="ta">à®¤à®®à®¿à®´à¯</option><option value="te">à°¤à±†à°²à±à°—à±</option></select></label>{authUser ? <><button className="login" onClick={() => loadDashboard()}>{authUser.role === 'admin' ? 'Admin Dashboard' : 'My History'}</button><button className="header-logout" onClick={logout}>Log out</button></> : <button className="login" onClick={() => {setAuthError('');setAuthMode('login')}}>Log in</button>}{!appInstalled && <button className="install-app-btn" onClick={installApp}><span aria-hidden="true">â†“</span> Install App</button>}<button className="nav-cta" onClick={openForm}>Try IdeaArena <span>↗</span></button></div>
+        
+<div className="nav-actions">
+  <label className="language-control" aria-label="Choose language">
+    <span>文</span>
+    <select
+      value={language}
+      onChange={e => {
+        const v = e.target.value as LanguageCode;
+        setLanguage(v);
+        localStorage.setItem("ideaarena-language", v);
+      }}
+    >
+      <option value="en">English</option>
+      <option value="hi">हिन्दी</option>
+      <option value="ta">தமிழ்</option>
+      <option value="te">తెలుగు</option>
+    </select>
+  </label>
+
+  {authUser ? (
+    <>
+      <button className="login" onClick={() => loadDashboard()}>
+        {authUser.role === 'admin' ? 'Admin Dashboard' : 'My History'}
+      </button>
+      <button className="header-logout" onClick={logout}>Log out</button>
+    </>
+  ) : (
+    <button className="login" onClick={() => {
+      setAuthError('');
+      setAuthMode('login');
+    }}>
+      Log in
+    </button>
+  )}
+
+  {!appInstalled && (
+    <button className="install-app-btn" onClick={installApp}>
+      <span aria-hidden="true">↓</span> Install App
+    </button>
+  )}
+
+  <button className="nav-cta" onClick={openForm}>
+    Try IdeaArena <span>↗</span>
+  </button>
+</div>
+
       </nav>
 
       <section className="hero">
