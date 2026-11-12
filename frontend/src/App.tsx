@@ -90,6 +90,11 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
   const [authUser, setAuthUser] = useState<AuthUser|null>(null)
+  const [resetStep, setResetStep] = useState<'email'|'otp'|'password'|null>(null)
+  const [resetOtp, setResetOtp] = useState('')
+  const [resetToken, setResetToken] = useState('')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
   const [dashboard, setDashboard] = useState<any>(null)
   const [selectedHistory, setSelectedHistory] = useState<any>(null)
   const [dashboardBusy, setDashboardBusy] = useState(false)
@@ -142,6 +147,48 @@ function App() {
       localStorage.setItem('ideaarena-token', d.token); localStorage.setItem('ideaarena-user', JSON.stringify(d.user))
       setAuthUser(d.user); setAuthMode(null); setAuthPassword(''); setDashboard(null); setSelectedHistory(null)
     } catch (err) { setAuthError(err instanceof Error ? err.message : 'Could not sign in.') }
+    finally { setAuthBusy(false) }
+  }
+
+  async function requestPasswordReset(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setAuthBusy(true); setAuthError('')
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/auth/password-reset/request`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: authEmail })
+      })
+      const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.detail || 'Could not request a reset code.')
+      setResetStep('otp')
+      setAuthError('If an account exists for that email, a 4-digit code will be sent. Check your inbox and spam folder.')
+    } catch (err) { setAuthError(err instanceof Error ? err.message : 'Could not request a reset code.') }
+    finally { setAuthBusy(false) }
+  }
+
+  async function verifyPasswordReset(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setAuthBusy(true); setAuthError('')
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/auth/password-reset/verify`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: authEmail, otp: resetOtp })
+      })
+      const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.detail || 'Could not verify the code.')
+      setResetToken(d.reset_token); setResetStep('password')
+    } catch (err) { setAuthError(err instanceof Error ? err.message : 'Could not verify the code.') }
+    finally { setAuthBusy(false) }
+  }
+
+  async function completePasswordReset(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setAuthError('')
+    if (resetNewPassword.length < 8) { setAuthError('Password must be at least 8 characters.'); return }
+    if (resetNewPassword !== resetConfirmPassword) { setAuthError('The passwords do not match.'); return }
+    setAuthBusy(true)
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/auth/password-reset/complete`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ email: authEmail, reset_token: resetToken, new_password: resetNewPassword })
+      })
+      const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.detail || 'Could not update the password.')
+      setResetStep(null); setResetOtp(''); setResetToken(''); setResetNewPassword(''); setResetConfirmPassword(''); setAuthPassword('')
+      setAuthError('Password updated successfully. Please sign in with your new password.')
+    } catch (err) { setAuthError(err instanceof Error ? err.message : 'Could not update the password.') }
     finally { setAuthBusy(false) }
   }
 
@@ -264,7 +311,18 @@ function App() {
       <section className="agents-section" id="agents"><div className="section-kicker">MEET YOUR EVALUATION TEAM</div><div className="section-heading"><h2>10 personas. <span>10 perspectives.</span></h2><p>Every persona has a distinct role and evaluation criteria. No single point of view gets the final word.</p></div><div className="agents-grid">{agents.map(a => <article className="agent-card" key={a[0]}><div className="agent-number">{a[0]}</div><div><h3>{a[1]}</h3><p>{a[2]}</p></div><span className="agent-arrow">↗</span></article>)}</div></section>
       <section className="final-cta" id="start"><div className="cta-glow"/><div className="section-kicker">YOUR NEXT BIG IDEA STARTS HERE</div><h2>Ready to challenge<br />your <span>next big idea?</span></h2><p>Don't wait until launch day to discover what you missed.</p><button className="primary-btn" onClick={openForm}>Enter the arena <span>↗</span></button><small>IDEAS ARE EASY. VALIDATION IS EVERYTHING.</small></section>
 
-      {authMode && <div className="ia-modal-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthMode(null)}}><section className="ia-auth-card" role="dialog" aria-modal="true" aria-label="Account access"><button className="ia-modal-close" onClick={()=>setAuthMode(null)} aria-label="Close">Ã—</button><div className="section-kicker">IDEAARENA ACCOUNT</div><h2>{authMode==='register'?'Create your account':authMode==='admin'?'Administrator access':'Welcome back'}</h2><p>{authMode==='register'?'Create an account to submit ideas and keep your evaluation history.':'Sign in to continue to your IdeaArena workspace.'}</p><div className="ia-auth-tabs"><button className={authMode==='login'?'active':''} onClick={()=>{setAuthMode('login');setAuthError('')}}>User login</button><button className={authMode==='register'?'active':''} onClick={()=>{setAuthMode('register');setAuthError('')}}>Create account</button><button className={authMode==='admin'?'active':''} onClick={()=>{setAuthMode('admin');setAuthError('')}}>Admin</button></div><form className="ia-auth-form" onSubmit={handleAuth}>{authMode==='register'&&<label>Full name<input required value={authName} onChange={e=>setAuthName(e.target.value)} autoComplete="name" /></label>}<label>Email address<input required type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} autoComplete="email" /></label><label>Password<input required type="password" minLength={authMode==='register'?8:1} value={authPassword} onChange={e=>setAuthPassword(e.target.value)} autoComplete={authMode==='register'?'new-password':'current-password'} /></label>{authError&&<div className="ia-auth-error">{authError}</div>}<button className="primary-btn submit-btn" disabled={authBusy}>{authBusy?'Please wait	…':authMode==='register'?'Create account':'Sign in'} ↗</button></form><small>Admin accounts are configured separately and cannot be created through public registration.</small></section></div>}
+      {authMode && <div className="ia-modal-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget){setAuthMode(null);setResetStep(null)}}}><section className="ia-auth-card" role="dialog" aria-modal="true" aria-label="Account access"><button className="ia-modal-close" onClick={()=>{setAuthMode(null);setResetStep(null)}} aria-label="Close">×</button><div className="section-kicker">IDEAARENA ACCOUNT</div>
+        {resetStep ? <>
+          <h2>{resetStep==='email'?'Forgot your password?':resetStep==='otp'?'Verify your email':'Choose a new password'}</h2>
+          <p>{resetStep==='email'?'Enter the email address linked to your IdeaArena account.':resetStep==='otp'?`Enter the 4-digit code sent to ${authEmail}.`:'Your email is verified. Set a new password for your account.'}</p>
+          {resetStep==='email' && <form className="ia-auth-form" onSubmit={requestPasswordReset}><label>Email address<input required type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} autoComplete="email" /></label>{authError&&<div className="ia-auth-error">{authError}</div>}<button className="primary-btn submit-btn" disabled={authBusy}>{authBusy?'Sending…':'Send verification code ↗'}</button></form>}
+          {resetStep==='otp' && <form className="ia-auth-form" onSubmit={verifyPasswordReset}><label>4-digit verification code<input required inputMode="numeric" pattern="[0-9]{4}" maxLength={4} value={resetOtp} onChange={e=>setResetOtp(e.target.value.replace(/\D/g,'').slice(0,4))} autoComplete="one-time-code" /></label>{authError&&<div className="ia-auth-error">{authError}</div>}<button className="primary-btn submit-btn" disabled={authBusy || resetOtp.length!==4}>{authBusy?'Verifying…':'Verify code ↗'}</button><button type="button" className="secondary-btn" onClick={()=>{setResetStep('email');setResetOtp('');setAuthError('')}}>Change email</button></form>}
+          {resetStep==='password' && <form className="ia-auth-form" onSubmit={completePasswordReset}><label>New password<input required type="password" minLength={8} maxLength={128} value={resetNewPassword} onChange={e=>setResetNewPassword(e.target.value)} autoComplete="new-password" /></label><label>Confirm new password<input required type="password" minLength={8} maxLength={128} value={resetConfirmPassword} onChange={e=>setResetConfirmPassword(e.target.value)} autoComplete="new-password" /></label>{authError&&<div className="ia-auth-error">{authError}</div>}<button className="primary-btn submit-btn" disabled={authBusy}>{authBusy?'Updating…':'Update password ↗'}</button></form>}
+          <button type="button" className="secondary-btn" onClick={()=>{setResetStep(null);setResetOtp('');setResetToken('');setAuthError('')}}>Back to login</button>
+        </> : <>
+          <h2>{authMode==='register'?'Create your account':authMode==='admin'?'Administrator access':'Welcome back'}</h2><p>{authMode==='register'?'Create an account to submit ideas and keep your evaluation history.':'Sign in to continue to your IdeaArena workspace.'}</p><div className="ia-auth-tabs"><button className={authMode==='login'?'active':''} onClick={()=>{setAuthMode('login');setAuthError('')}}>User login</button><button className={authMode==='register'?'active':''} onClick={()=>{setAuthMode('register');setAuthError('')}}>Create account</button><button className={authMode==='admin'?'active':''} onClick={()=>{setAuthMode('admin');setAuthError('')}}>Admin</button></div><form className="ia-auth-form" onSubmit={handleAuth}>{authMode==='register'&&<label>Full name<input required value={authName} onChange={e=>setAuthName(e.target.value)} autoComplete="name" /></label>}<label>Email address<input required type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} autoComplete="email" /></label><label>Password<input required type="password" minLength={authMode==='register'?8:1} value={authPassword} onChange={e=>setAuthPassword(e.target.value)} autoComplete={authMode==='register'?'new-password':'current-password'} /></label>{authMode==='login'&&<button type="button" className="ia-forgot-link" style={{background:"none",border:0,padding:0,color:"inherit",textDecoration:"underline",cursor:"pointer",alignSelf:"flex-end"}} onClick={()=>{setResetStep('email');setAuthError('')}}>Forgot Password?</button>}{authError&&<div className="ia-auth-error">{authError}</div>}<button className="primary-btn submit-btn" disabled={authBusy}>{authBusy?'Please wait…':authMode==='register'?'Create account':'Sign in'} ↗</button></form><small>Admin accounts are configured separately and cannot be created through public registration.</small>
+        </>}
+      </section></div>}
       {authUser && dashboard !== null && <div className="ia-dashboard-wrap"><section className="ia-dashboard"><div className="ia-dashboard-top"><div><div className="section-kicker">{authUser.role==='admin'?'ADMINISTRATION':'YOUR WORKSPACE'}</div><h2>Hello, <span>{authUser.name}</span></h2><p>{authUser.email}</p></div><div className="ia-dashboard-actions"><button className="secondary-btn" onClick={()=>loadDashboard()}>Refresh</button><button className="secondary-btn" onClick={()=>setDashboard(null)}>Close</button><button className="secondary-btn" onClick={logout}>Log out</button></div></div>{dashboardBusy?<p>Loading dashboard	…</p>:dashboardError?<div className="ia-auth-error">{dashboardError}</div>:authUser.role==='admin'?<><div className="ia-stat-grid"><article><small>REGISTERED USERS</small><strong>{dashboard?.stats?.users ?? 0}</strong></article><article><small>USER EVALUATIONS</small><strong>{dashboard?.stats?.user_evaluations ?? 0}</strong></article></div><h3>Registered users</h3><div className="ia-table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Evaluations</th></tr></thead><tbody>{(dashboard?.users||[]).map((u:any)=><tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.created_at}</td><td>{u.evaluation_count}</td></tr>)}</tbody></table>{!dashboard?.users?.length&&<p>No registered users yet.</p>}</div><h3>Evaluation activity</h3><div className="ia-table-wrap"><table><thead><tr><th>Idea</th><th>User</th><th>Email</th><th>Date</th></tr></thead><tbody>{(dashboard?.evaluations||[]).map((v:any)=><tr key={v.id}><td>{v.title}</td><td>{v.user_name}</td><td>{v.user_email}</td><td>{v.created_at}</td></tr>)}</tbody></table>{!dashboard?.evaluations?.length&&<p>No user evaluations yet.</p>}</div></>:<>{selectedHistory ? <div className="ia-history-detail"><div className="ia-history-detail-top"><div><div className="section-kicker">SAVED EVALUATION REPORT</div><h3>{selectedHistory.title}</h3><small>Submitted: {selectedHistory.created_at}</small></div><button className="secondary-btn" onClick={()=>setSelectedHistory(null)}>← Back to history</button></div><ReportView report={selectedHistory.evaluation as Report} title={selectedHistory.title} language={language} /></div> : <><h3>Your idea history</h3><p className="ia-history-hint">Select any idea below to open its complete evaluation report.</p><div className="ia-history-list">{(dashboard?.history||[]).map((v:any)=><button type="button" className="ia-history-item" key={v.id} onClick={()=>setSelectedHistory(v)}><div><strong>{v.title}</strong><small>{v.created_at}</small></div><div className="ia-history-score"><b>{Number(v.evaluation?.score ?? 0).toFixed(1)} / 10</b><span>View full report ↗</span></div></button>)}</div>{!dashboard?.history?.length&&<p>You haven't submitted an idea yet. Start an evaluation to see it here.</p>}<button className="primary-btn" onClick={()=>{setDashboard(null);openForm()}}>Submit an idea ↗</button></>}</>}</section></div>}
       {showForm && authUser && <section id="idea-form" className="idea-form-section">
         <div className="section-kicker">START YOUR EVALUATION</div><h2>Submit your <span>big idea.</span></h2><p>Describe your idea. Let the AI evaluate its potential.</p>
