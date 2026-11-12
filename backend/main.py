@@ -79,6 +79,21 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
+
+class PasswordResetVerifyRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    otp: str = Field(pattern=r"^\d{4}$")
+
+
+class PasswordResetCompleteRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    reset_token: str = Field(min_length=20, max_length=200)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 def _db():
     # tuple_row preserves the existing row[index] access pattern.
     return psycopg.connect(DATABASE_URL, row_factory=tuple_row)
@@ -185,6 +200,15 @@ def _init_auth_db():
             result_json TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS password_reset_codes (
+            email TEXT PRIMARY KEY,
+            otp_hash TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_sent_at TIMESTAMPTZ NOT NULL,
+            reset_token_hash TEXT,
+            reset_expires_at TIMESTAMPTZ
+        )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_evaluations_user ON user_evaluations(user_id, created_at DESC)")
 
     admin_email = _normalise_email(os.getenv("IDEAARENA_ADMIN_EMAIL", ""))
@@ -289,6 +313,166 @@ def login_admin(payload: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid administrator credentials.")
     user = {"id": row[0], "name": row[1], "email": row[2], "role": row[4], "created_at": row[5]}
     return {"success": True, "token": _issue_token(user), "user": user}
+
+
+# ---------------------------------------------------------------------------
+# Password reset by email OTP. Codes expire after 5 minutes, have at most
+# 5 verification attempts, and can be resent only once every 60 seconds.
+# ---------------------------------------------------------------------------
+PASSWORD_RESET_OTP_TTL_SECONDS = 5 * 60
+PASSWORD_RESET_RESEND_SECONDS = 60
+PASSWORD_RESET_MAX_ATTEMPTS = 5
+PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60
+
+
+def _reset_digest(value: str, purpose: str) -> str:
+    message = f"{purpose}:{value}".encode("utf-8")
+    return hmac.new(_secret_key(), message, hashlib.sha256).hexdigest()
+
+
+@app.post("/api/auth/password-reset/request")
+async def request_password_reset(payload: PasswordResetRequest):
+    email = _normalise_email(payload.email)
+    generic = {"success": True, "message": "If an account exists for that email, a verification code will be sent."}
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        print("Password reset diagnostic: invalid email format.")
+        return generic
+
+    now = datetime.now(timezone.utc)
+    with _db() as conn:
+        # Allow password reset for both normal users and the configured admin.
+        # Email ownership is still verified through the one-time code sent by Resend.
+        user = conn.execute(
+            "SELECT id, role FROM users WHERE email = %s", (email,)
+        ).fetchone()
+        if not user:
+            print("Password reset diagnostic: no matching user account.")
+            return generic
+        previous = conn.execute(
+            "SELECT last_sent_at FROM password_reset_codes WHERE email = %s", (email,)
+        ).fetchone()
+        if previous and (now - previous[0]).total_seconds() < PASSWORD_RESET_RESEND_SECONDS:
+            print("Password reset diagnostic: resend cooldown is active.")
+            return generic
+
+        otp = f"{secrets.randbelow(9000) + 1000:04d}"
+        otp_hash = _reset_digest(f"{email}:{otp}", "email-otp")
+        conn.execute(
+            """INSERT INTO password_reset_codes
+               (email, otp_hash, expires_at, attempts, last_sent_at, reset_token_hash, reset_expires_at)
+               VALUES (%s, %s, %s, 0, %s, NULL, NULL)
+               ON CONFLICT (email) DO UPDATE SET
+                 otp_hash = EXCLUDED.otp_hash,
+                 expires_at = EXCLUDED.expires_at,
+                 attempts = 0,
+                 last_sent_at = EXCLUDED.last_sent_at,
+                 reset_token_hash = NULL,
+                 reset_expires_at = NULL""",
+            (email, otp_hash, datetime.fromtimestamp(now.timestamp() + PASSWORD_RESET_OTP_TTL_SECONDS, timezone.utc), now)
+        )
+
+    resend_key = os.getenv("RESEND_API_KEY", "").strip()
+    email_from = os.getenv("EMAIL_FROM", "").strip()
+    if not resend_key or not email_from:
+        print(
+            "Password reset diagnostic: missing configuration "
+            f"(RESEND_API_KEY set={bool(resend_key)}, EMAIL_FROM set={bool(email_from)})."
+        )
+        return generic
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                json={
+                    "from": email_from,
+                    "to": [email],
+                    "subject": "Your IdeaArena password reset code",
+                    "html": f"<div style='font-family:Arial,sans-serif;max-width:520px;margin:auto'><h2>Reset your IdeaArena password</h2><p>Use this verification code to continue:</p><p style='font-size:32px;font-weight:700;letter-spacing:8px'>{otp}</p><p>This code expires in 5 minutes. If you did not request this, you can ignore this email.</p></div>",
+                    "text": f"Your IdeaArena password reset code is {otp}. It expires in 5 minutes. If you did not request this, ignore this email."
+                }
+            )
+            response.raise_for_status()
+            try:
+                resend_result = response.json()
+                resend_id = resend_result.get("id", "not provided") if isinstance(resend_result, dict) else "not provided"
+            except ValueError:
+                resend_id = "not provided"
+            print(f"Password reset diagnostic: Resend accepted email (HTTP {response.status_code}, id={resend_id}).")
+    except httpx.HTTPStatusError as exc:
+        # Log the provider's response, but never log request headers, API key, or OTP.
+        provider_message = (exc.response.text or "").replace("\\n", " ")[:1000]
+        print(
+            "Password reset diagnostic: Resend rejected the email "
+            f"(HTTP {exc.response.status_code}): {provider_message}"
+        )
+        with _db() as conn:
+            conn.execute("DELETE FROM password_reset_codes WHERE email = %s", (email,))
+    except httpx.RequestError as exc:
+        print(
+            "Password reset diagnostic: could not connect to Resend "
+            f"({type(exc).__name__})."
+        )
+        with _db() as conn:
+            conn.execute("DELETE FROM password_reset_codes WHERE email = %s", (email,))
+    except httpx.HTTPError as exc:
+        print(f"Password reset diagnostic: Resend HTTP error ({type(exc).__name__}).")
+        with _db() as conn:
+            conn.execute("DELETE FROM password_reset_codes WHERE email = %s", (email,))
+    return generic
+
+
+@app.post("/api/auth/password-reset/verify")
+def verify_password_reset(payload: PasswordResetVerifyRequest):
+    email = _normalise_email(payload.email)
+    now = datetime.now(timezone.utc)
+    invalid_code = False
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT otp_hash, expires_at, attempts FROM password_reset_codes WHERE email = %s",
+            (email,)
+        ).fetchone()
+        if not row or row[2] >= PASSWORD_RESET_MAX_ATTEMPTS or row[1] <= now:
+            invalid_code = True
+        else:
+            expected = _reset_digest(f"{email}:{payload.otp}", "email-otp")
+            if not hmac.compare_digest(row[0], expected):
+                conn.execute(
+                    "UPDATE password_reset_codes SET attempts = attempts + 1 WHERE email = %s", (email,)
+                )
+                invalid_code = True
+            else:
+                reset_token = secrets.token_urlsafe(32)
+                conn.execute(
+                    "UPDATE password_reset_codes SET reset_token_hash = %s, reset_expires_at = %s WHERE email = %s",
+                    (_reset_digest(reset_token, "password-reset-token"), datetime.fromtimestamp(now.timestamp() + PASSWORD_RESET_TOKEN_TTL_SECONDS, timezone.utc), email)
+                )
+    if invalid_code:
+        raise HTTPException(status_code=400, detail="The code is invalid or expired. Request a new code.")
+    return {"success": True, "reset_token": reset_token, "message": "Code verified. You can now choose a new password."}
+
+
+@app.post("/api/auth/password-reset/complete")
+def complete_password_reset(payload: PasswordResetCompleteRequest):
+    email = _normalise_email(payload.email)
+    now = datetime.now(timezone.utc)
+    supplied_hash = _reset_digest(payload.reset_token, "password-reset-token")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT reset_token_hash, reset_expires_at FROM password_reset_codes WHERE email = %s",
+            (email,)
+        ).fetchone()
+        if not row or not row[0] or not row[1] or row[1] <= now or not hmac.compare_digest(row[0], supplied_hash):
+            raise HTTPException(status_code=400, detail="Password reset session expired. Request a new code.")
+        updated = conn.execute(
+            "UPDATE users SET password_hash = %s WHERE email = %s RETURNING id",
+            (_password_hash(payload.new_password), email)
+        ).fetchone()
+        if not updated:
+            raise HTTPException(status_code=400, detail="Password could not be updated. Request a new code.")
+        conn.execute("DELETE FROM password_reset_codes WHERE email = %s", (email,))
+    return {"success": True, "message": "Your password has been updated. Please sign in."}
 
 
 @app.get("/api/auth/me")
